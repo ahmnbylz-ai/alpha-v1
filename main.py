@@ -412,19 +412,31 @@ def get_user_page(db, user):
 
 # --- [ 5. محرك السيرفر ] ---
 class SpiderServer(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
+        def do_GET(self):
         db = load_db()
-        ck = http.cookies.SimpleCookie(self.headers.get('Cookie'))
+        ck = cookies.SimpleCookie(self.headers.get('Cookie'))
         user = ck['session_user'].value if 'session_user' in ck else None
         p, q = urlparse(self.path).path, parse_qs(urlparse(self.path).query)
         
-        def res(h): self.send_response(200); self.send_header("Content-type", "text/html; charset=utf-8"); self.end_headers(); self.wfile.write(h.encode('utf-8'))
-        def go(l): self.send_response(302); self.send_header("Location", l); self.end_headers()
+        def res(h): 
+            self.send_response(200)
+            self.send_header("Content-type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(h.encode('utf-8'))
+            
+        def go(l): 
+            self.send_response(302)
+            self.send_header("Location", l)
+            self.end_headers()
 
+        # 1. نظام الدخول والتسجيل
         if p == "/auth":
             u_in, p_in = q.get('user',[''])[0], q.get('pass',[''])[0]
             if u_in in db['users'] and db['users'][u_in]['pass'] == hash_pass(p_in):
-                self.send_response(302); self.send_header("Set-Cookie", f"session_user={u_in}; Path=/; HttpOnly"); self.send_header("Location", "/"); self.end_headers()
+                self.send_response(302)
+                self.send_header("Set-Cookie", f"session_user={u_in}; Path=/; HttpOnly")
+                self.send_header("Location", "/")
+                self.end_headers()
             else: res("خطأ في بيانات الدخول!")
             return
 
@@ -433,45 +445,49 @@ class SpiderServer(http.server.BaseHTTPRequestHandler):
             if nu and np and nu not in db['users']:
                 db['users'][nu] = {"pass": hash_pass(np), "balance": 0.0, "phone": ph, "is_admin": False}
                 save_db(db)
-                self.send_response(302); self.send_header("Set-Cookie", f"session_user={nu}; Path=/; HttpOnly"); self.send_header("Location", "/"); self.end_headers()
-            else: res("اسم المستخدم موجود مسبقاً أو بيانات ناقصة")
+                self.send_response(302)
+                self.send_header("Set-Cookie", f"session_user={nu}; Path=/; HttpOnly")
+                self.send_header("Location", "/")
+                self.end_headers()
+            else: res("خطأ: البيانات غير مكتملة أو المستخدم موجود")
             return
 
-        if p == "/logout": self.send_response(302); self.send_header("Set-Cookie", "session_user=; Max-Age=0; Path=/"); self.send_header("Location", "/"); self.end_headers(); return
-        if not user: res(get_welcome_page()); return
+        if p == "/logout":
+            self.send_response(302)
+            self.send_header("Set-Cookie", "session_user=; Max-Age=0; Path=/")
+            self.send_header("Location", "/")
+            self.end_headers()
+            return
 
+        # 2. حماية الموقع (إذا لم يسجل دخول يرى صفحة الترحيب فقط)
+        if not user:
+            res(get_welcome_page())
+            return
+
+        # 3. أوامر الإدارة
         if p == "/admin_action":
             t = q.get('type', [''])[0]
             if t == "add_full_svc":
                 new_id = str(len(db.get('services', [])) + 1)
-                db.setdefault('services', []).append({"id": new_id, "name": q.get('n', [''])[0], "cat": q.get('c', [''])[0], "price": float(q.get('p', ['0'])[0]), "remote_id": q.get('sid', [''])[0], "api_url": q.get('url', [''])[0], "api_key": q.get('key', [''])[0]})
-                save_db(db); go("/admin_panel"); return
+                db.setdefault('services', []).append({
+                    "id": new_id, "name": q.get('n', [''])[0], "cat": q.get('c', [''])[0],
+                    "price": float(q.get('p', ['0'])[0]), "remote_id": q.get('sid', [''])[0],
+                    "api_url": q.get('url', [''])[0], "api_key": q.get('key', [''])[0]
+                })
+                save_db(db); go("/admin_panel")
             elif t == "adj_bal":
                 target, amt, mode = q.get('u',[''])[0], float(q.get('a',['0'])[0]), q.get('mode',[''])[0]
                 if target in db['users']:
                     db['users'][target]['balance'] += amt if mode == "plus" else -amt
-                    save_db(db); go("/admin_panel"); return
-            elif t == "del_svc":
-                sid = q.get('id',[''])[0]
-                db['services'] = [s for s in db['services'] if s['id'] != sid]
-                save_db(db); go("/admin_panel"); return
-            elif t == "toggle_site":
-                db['is_active'] = not db.get('is_active', True); save_db(db); go("/admin_panel"); return
+                    save_db(db); go("/admin_panel")
+            return
 
-        # معالجة طلب الخدمة (التلقائي)
+        # 4. معالجة طلب الخدمة (API)
         if p == "/place_order_api":
-            sid = q.get('sid',[''])[0]
-            qty_str = q.get('qty',['0'])[0]
-            link = q.get('link',[''])[0]
-            
-            try:
-                qty = int(qty_str)
-            except:
-                res("<html><script>alert('الكمية غير صحيحة'); window.location='/';</script></html>")
-                return
-
+            sid, qty_s, link = q.get('sid',[''])[0], q.get('qty',['0'])[0], q.get('link',[''])[0]
             svc = next((s for s in db.get('services', []) if s['id'] == sid), None)
-            if svc and qty > 0:
+            if svc and int(qty_s) > 0:
+                qty = int(qty_s)
                 cost = (float(svc['price']) / 1000) * qty
                 if db['users'][user]['balance'] >= cost:
                     success, result = send_api_order(svc['api_url'], svc['api_key'], svc['remote_id'], link, qty)
@@ -479,21 +495,25 @@ class SpiderServer(http.server.BaseHTTPRequestHandler):
                         db['users'][user]['balance'] -= cost
                         db['orders'].append({"user": user, "svc": svc['name'], "qty": qty, "cost": cost, "status": "مكتمل", "remote_id": result})
                         save_db(db)
-                        res("<html><script>alert('تم تنفيذ الطلب بنجاح!'); window.location='/';</script></html>")
+                        res("<html><script>alert('تم الطلب بنجاح!'); window.location='/';</script></html>")
                     else:
-                        res(f"<html><script>alert('فشل من المزود: {result}'); window.location='/';</script></html>")
-                    return
-            res("<html><script>alert('فشل! تأكد من البيانات'); window.location='/';</script></html>")
+                        res(f"<html><script>alert('خطأ: {result}'); window.location='/';</script></html>")
+                else:
+                    res("<html><script>alert('رصيدك غير كافٍ'); window.location='/';</script></html>")
             return
 
-        # توجيه الصفحات
-        if p == "/admin_panel": res(get_admin_page(db))
-        elif p == "/settings": res(get_settings_page(db, user))
-        elif p == "/order_history": res(get_orders_page(db, user))
-        else: res(get_user_page(db, user))
+        # 5. توجيه الصفحات الرئيسية
+        if p == "/admin_panel":
+            res(get_admin_page(db))
+        elif p == "/settings":
+            res(get_settings_page(db, user))
+        elif p == "/order_history":
+            res(get_orders_page(db, user))
+        else:
+            res(get_user_page(db, user))
 
 if __name__ == "__main__":
     socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer(("", PORT), SpiderServer) as httpd:
-        print(f"🚀 السيرفر يعمل الآن: http://localhost:{PORT}")
+        print(f"🚀 السيرفر يعمل: http://localhost:{PORT}")
         httpd.serve_forever()
