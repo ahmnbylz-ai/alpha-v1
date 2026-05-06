@@ -279,31 +279,136 @@ def get_admin_page(db):
 
 def get_user_page(db, user):
     u = db["users"][user]
-    svcs, orders = db.get("services", []), db.get("orders", [])
-    user_orders = [o for o in orders if o.get('user') == user]
+    svcs = db.get("services", [])
+    user_orders = [o for o in db.get("orders", []) if o.get('user') == user]
     cats = sorted(list(set([s['cat'] for s in svcs])))
-    return f"""<!DOCTYPE html><html lang="ar"><head><meta charset="UTF-8">{get_master_style()}</head><body>
-        <div class="header"><div style="font-weight:900; color:var(--accent); font-size:22px;">{SITE_NAME}</div><a href="/settings" style="color:white; font-size:24px;"><i class="fas fa-cog"></i></a></div>
+    
+    return f"""<!DOCTYPE html><html lang="ar"><head><meta charset="UTF-8">
+    {get_master_style()}
+    <style>
+        /* تحسين شكل القوائم المنسدلة */
+        select {{
+            appearance: none; -webkit-appearance: none;
+            background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f39c12' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+            background-repeat: no-repeat; background-position: left 15px center; background-size: 15px;
+            padding-left: 40px !important; cursor: pointer; border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }}
+        select:focus {{ border-color: var(--accent); background-color: rgba(255, 255, 255, 0.08); }}
+        option {{ background: #1a2a33; color: #fff; }}
+        
+        .input-label {{ font-size: 13px; color: var(--accent); margin: 15px 10px 5px 0; display: block; font-weight: bold; }}
+        
+        /* انيميشن النافذة الزجاجية */
+        @keyframes slideUp {{ from {{ transform: translateY(50px); opacity:0; }} to {{ transform: translateY(0); opacity:1; }} }}
+        .modal-detail-row {{ display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid rgba(255,255,255,0.05); font-size:14px; }}
+    </style>
+    </head><body>
+        <div class="header">
+            <div style="font-weight:900; color:var(--accent); font-size:22px;">{SITE_NAME}</div>
+            <a href="/settings" style="color:white; font-size:24px;"><i class="fas fa-cog"></i></a>
+        </div>
+        
         <div class="stats-grid" style="margin-top:20px;">
             <div class="stat-item"><i class="fas fa-wallet"></i><div class="stat-label">رصيدك</div><div class="stat-value">${u['balance']:.2f}</div></div>
             <div class="stat-item"><i class="fas fa-shopping-bag"></i><div class="stat-label">طلباتك</div><div class="stat-value">{len(user_orders)}</div></div>
             <div class="stat-item"><i class="fas fa-star"></i><div class="stat-label">الفئة</div><div class="stat-value">VIP</div></div>
         </div>
+
         <div class="card">
-            <h4><i class="fas fa-shopping-cart"></i> إنشاء طلب جديد</h4>
-            <input type="text" placeholder="🔍 ابحث عن خدمة..." oninput="doSearch(this.value)">
-            <form action="/place_order_api" style="margin-top:10px;">
-                <select id="c_sel" onchange="loadSvcs(this.value)" required><option value="">-- اختر القسم --</option>{"".join([f'<option value="{c}">{c}</option>' for c in cats])}</select>
-                <select name="sid" id="s_sel" required><option value="">-- اختر الخدمة --</option></select>
-                <input type="text" name="link" placeholder="رابط الحساب / المنشور" required>
-                <input type="number" name="qty" placeholder="الكمية المطلوبة" required>
-                <button type="submit" class="btn-send">تأكيد الطلب</button>
+            <h4 style="margin-top:0; color:var(--accent);"><i class="fas fa-shopping-cart"></i> إنشاء طلب جديد</h4>
+            
+            <form id="orderForm">
+                <span class="input-label">اختر القسم:</span>
+                <select id="c_sel" onchange="loadSvcs(this.value)" required>
+                    <option value="">-- اضغط للاختيار --</option>
+                    {"".join([f'<option value="{c}">{c}</option>' for c in cats])}
+                </select>
+
+                <span class="input-label">اختر الخدمة:</span>
+                <select name="sid" id="s_sel" required>
+                    <option value="">-- اختر القسم أولاً --</option>
+                </select>
+
+                <span class="input-label">رابط الحساب / المنشور:</span>
+                <input type="text" id="link" placeholder="ضع الرابط هنا..." required>
+                
+                <span class="input-label">الكمية المطلوبة:</span>
+                <input type="number" id="qty" placeholder="أدخل الكمية..." required>
+                
+                <button type="button" onclick="submitOrder()" class="btn-send" style="margin-top:25px;">
+                    <i class="fas fa-bolt"></i> تنفيذ الطلب الآن
+                </button>
             </form>
         </div>
-        <div class="bottom-nav"><a href="/" class="nav-item active"><i class="fas fa-home"></i>الرئيسية</a><a href="https://t.me/{TELEGRAM_USER}" class="nav-item"><i class="fab fa-telegram"></i>الدعم الفني</a></div>
-        <script>const data = {json.dumps(svcs)}; function doSearch(v){{ const s=document.getElementById('s_sel'); s.innerHTML='<option value="">نتائج البحث...</option>'; data.filter(i=>i.name.toLowerCase().includes(v.toLowerCase())).forEach(i=>{{ let o=document.createElement('option'); o.value=i.id; o.textContent=i.name+" ($"+i.price+")"; s.appendChild(o); }}); }}
-        function loadSvcs(c){{ const s=document.getElementById('s_sel'); s.innerHTML='<option value="">اختر الخدمة...</option>'; data.filter(i=>i.cat===c).forEach(i=>{{ let o=document.createElement('option'); o.value=i.id; o.textContent=i.name; s.appendChild(o); }}); }}</script>
+
+        <div id="orderModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); z-index:9999; align-items:center; justify-content:center;">
+            <div class="card" id="modalBody" style="width:88%; max-width:380px; text-align:center; animation: slideUp 0.4s ease-out; border:1px solid rgba(243, 156, 18, 0.3);">
+                </div>
+        </div>
+
+        <div class="bottom-nav">
+            <a href="/" class="nav-item active"><i class="fas fa-home"></i>الرئيسية</a>
+            <a href="https://t.me/{TELEGRAM_USER}" class="nav-item"><i class="fab fa-telegram"></i>الدعم الفني</a>
+        </div>
+
+        <script>
+            const data = {json.dumps(svcs)};
+            
+            function loadSvcs(c){{
+                const s = document.getElementById('s_sel'); 
+                s.innerHTML = '<option value="">اختر الخدمة...</option>';
+                data.filter(i => i.cat === c).forEach(i => {{
+                    let o = document.createElement('option'); 
+                    o.value = i.id; 
+                    o.textContent = i.name + " ($" + i.price + ")"; 
+                    s.appendChild(o);
+                }});
+            }}
+
+            async function submitOrder() {{
+                const modal = document.getElementById('orderModal');
+                const modalBody = document.getElementById('modalBody');
+                const sid = document.getElementById('s_sel').value;
+                const qty = document.getElementById('qty').value;
+                const link = document.getElementById('link').value;
+
+                if(!sid || !qty || !link) {{ alert('أكمل البيانات أولاً صديقي!'); return; }}
+
+                modal.style.display = 'flex';
+                modalBody.innerHTML = '<i class="fas fa-spinner fa-spin" style="font-size:45px; color:var(--accent); margin-bottom:15px;"></i><p>جاري فحص الرصيد وإرسال الطلب...</p>';
+
+                try {{
+                    const response = await fetch(`/place_order_api?sid=${{sid}}&qty=${{qty}}&link=${{link}}`);
+                    const res = await response.json();
+
+                    if(res.status === 'success') {{
+                        modalBody.innerHTML = `
+                            <i class="fas fa-check-circle" style="font-size:60px; color:#2ecc71; margin-bottom:15px;"></i>
+                            <h2 style="margin:0;">تم الطلب!</h2>
+                            <div style="margin:20px 0; background:rgba(255,255,255,0.05); padding:15px; border-radius:20px; text-align:right;">
+                                <div class="modal-detail-row"><span>الخدمة:</span> <span>${{res.svc_name}}</span></div>
+                                <div class="modal-detail-row"><span>الكمية:</span> <span>${{qty}}</span></div>
+                                <div class="modal-detail-row"><span>التكلفة:</span> <span style="color:#2ecc71;">${{res.cost}}$</span></div>
+                                <div class="modal-detail-row"><span>رقم العملية:</span> <span>#${{res.order_id}}</span></div>
+                            </div>
+                            <button onclick="location.reload()" class="btn-send" style="margin:0;">موافق، شكراً</button>
+                        `;
+                    }} else {{
+                        modalBody.innerHTML = `
+                            <i class="fas fa-exclamation-circle" style="font-size:60px; color:#ff4757; margin-bottom:15px;"></i>
+                            <h3 style="margin:0;">فشل الطلب</h3>
+                            <p style="color:rgba(255,255,255,0.7); margin:15px 0;">${{res.message}}</p>
+                            <button onclick="document.getElementById('orderModal').style.display='none'" class="btn-send" style="margin:0; background:#ff4757; color:white;">حاول مرة أخرى</button>
+                        `;
+                    }}
+                }} catch (e) {{
+                    modalBody.innerHTML = '<p>تعذر الاتصال بالسيرفر، تأكد من تشغيل الموقع</p><button onclick="location.reload()" class="btn-send">تحديث</button>';
+                }}
+            }}
+        </script>
     </body></html>"""
+
 
 # --- [ 5. محرك السيرفر ] ---
 class SpiderServer(http.server.BaseHTTPRequestHandler):
