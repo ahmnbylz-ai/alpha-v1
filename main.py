@@ -458,27 +458,35 @@ class SpiderServer(http.server.BaseHTTPRequestHandler):
             elif t == "toggle_site":
                 db['is_active'] = not db.get('is_active', True); save_db(db); go("/admin_panel"); return
 
-if p == "/place_order_api":
-            sid, qty, link = q.get('sid',[''])[0], int(q.get('qty',['0'])[0]), q.get('link',[''])[0]
+        # معالجة طلب الخدمة (التلقائي)
+        if p == "/place_order_api":
+            sid = q.get('sid',[''])[0]
+            qty_str = q.get('qty',['0'])[0]
+            link = q.get('link',[''])[0]
+            
+            try:
+                qty = int(qty_str)
+            except:
+                res("<html><script>alert('الكمية غير صحيحة'); window.location='/';</script></html>")
+                return
+
             svc = next((s for s in db.get('services', []) if s['id'] == sid), None)
             if svc and qty > 0:
                 cost = (float(svc['price']) / 1000) * qty
                 if db['users'][user]['balance'] >= cost:
-                    # محاولة إرسال الطلب للمزود تلقائياً
                     success, result = send_api_order(svc['api_url'], svc['api_key'], svc['remote_id'], link, qty)
                     if success:
                         db['users'][user]['balance'] -= cost
                         db['orders'].append({"user": user, "svc": svc['name'], "qty": qty, "cost": cost, "status": "مكتمل", "remote_id": result})
                         save_db(db)
-                        res("<html><script>alert('تم تنفيذ الطلب بنجاح وتلقائياً!'); window.location='/';</script></html>")
+                        res("<html><script>alert('تم تنفيذ الطلب بنجاح!'); window.location='/';</script></html>")
                     else:
-                        res(f"<html><script>alert('فشل الطلب من المزود: {result}'); window.location='/';</script></html>")
+                        res(f"<html><script>alert('فشل من المزود: {result}'); window.location='/';</script></html>")
                     return
-            res("<html><script>alert('فشل! تأكد من الرصيد والكمية'); window.location='/';</script></html>"); return
+            res("<html><script>alert('فشل! تأكد من البيانات'); window.location='/';</script></html>")
+            return
 
-        # توجيه الصفحات (هذا السطر 461 في صورتك)
-        if p == "/admin_panel": res(get_admin_page(db))
-
+        # توجيه الصفحات
         if p == "/admin_panel": res(get_admin_page(db))
         elif p == "/settings": res(get_settings_page(db, user))
         elif p == "/order_history": res(get_orders_page(db, user))
