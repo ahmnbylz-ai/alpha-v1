@@ -458,29 +458,23 @@ class SpiderServer(http.server.BaseHTTPRequestHandler):
             elif t == "toggle_site":
                 db['is_active'] = not db.get('is_active', True); save_db(db); go("/admin_panel"); return
 
-                # معالجة طلب الخدمة (التلقائي عبر النافذة الزجاجية)
-        if p == "/place_order_api":
-            sid, qty_s, link = q.get('sid',[''])[0], q.get('qty',['0'])[0], q.get('link',[''])[0]
-            try:
-                qty = int(qty_s)
-            except:
-                return res_json(self, {"status": "error", "message": "الكمية غير صحيحة"})
-
+if p == "/place_order_api":
+            sid, qty, link = q.get('sid',[''])[0], int(q.get('qty',['0'])[0]), q.get('link',[''])[0]
             svc = next((s for s in db.get('services', []) if s['id'] == sid), None)
             if svc and qty > 0:
                 cost = (float(svc['price']) / 1000) * qty
                 if db['users'][user]['balance'] >= cost:
+                    # محاولة إرسال الطلب للمزود تلقائياً
                     success, result = send_api_order(svc['api_url'], svc['api_key'], svc['remote_id'], link, qty)
                     if success:
                         db['users'][user]['balance'] -= cost
                         db['orders'].append({"user": user, "svc": svc['name'], "qty": qty, "cost": cost, "status": "مكتمل", "remote_id": result})
                         save_db(db)
-                        return res_json(self, {"status": "success", "svc_name": svc['name'], "cost": f"{cost:.2f}", "order_id": result})
+                        res("<html><script>alert('تم تنفيذ الطلب بنجاح وتلقائياً!'); window.location='/';</script></html>")
                     else:
-                        return res_json(self, {"status": "error", "message": f"خطأ المزود: {result}"})
-                else:
-                    return res_json(self, {"status": "error", "message": "عذراً، رصيدك غير كافٍ"})
-            return res_json(self, {"status": "error", "message": "يرجى ملء كافة الحقول"})
+                        res(f"<html><script>alert('فشل الطلب من المزود: {result}'); window.location='/';</script></html>")
+                    return
+            res("<html><script>alert('فشل! تأكد من الرصيد والكمية'); window.location='/';</script></html>"); return
 
         # توجيه الصفحات (هذا السطر 461 في صورتك)
         if p == "/admin_panel": res(get_admin_page(db))
